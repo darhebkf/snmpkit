@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 
 mod agentx;
 pub mod oid;
-mod types;
+pub mod types;
 
 #[pymodule(name = "_core")]
 fn snmpkit_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
