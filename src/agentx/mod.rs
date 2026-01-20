@@ -1,3 +1,4 @@
+pub mod bindings;
 pub mod bodies;
 pub mod header;
 pub mod parallel;
