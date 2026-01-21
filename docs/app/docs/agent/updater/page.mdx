@@ -1,0 +1,245 @@
+import { Callout } from 'nextra/components'
+
+# Updater
+
+The `Updater` class is the core abstraction for providing SNMP values. Subclass it and override `update()` to fetch data from any source.
+
+## Basic Usage
+
+```python
+from snmpkit.agent import Updater
+
+class MyUpdater(Updater):
+    async def update(self):
+        self.set_INTEGER("1.0", 42)
+        self.set_OCTETSTRING("2.0", "Hello")
+```
+
+## How It Works
+
+1. You register an `Updater` instance for an OID subtree
+2. The agent calls `update()` periodically (configurable frequency)
+3. In `update()`, you call `set_*` methods to provide values
+4. When SNMP requests arrive, the agent returns your stored values
+
+```python
+agent.register(
+    "1.3.6.1.4.1.12345",  # Base OID
+    MyUpdater(),           # Your updater instance
+    freq=10,               # Update every 10 seconds
+)
+```
+
+## Value Setter Methods
+
+All setters take an OID suffix and a value. The suffix is appended to your registered base OID.
+
+### Integers
+
+```python
+def set_INTEGER(self, oid: str, value: int) -> None
+```
+
+32-bit signed integer (-2,147,483,648 to 2,147,483,647).
+
+```python
+self.set_INTEGER("1.0", -5)
+self.set_INTEGER("2.0", 1000)
+```
+
+### Strings
+
+```python
+def set_OCTETSTRING(self, oid: str, value: str | bytes) -> None
+```
+
+Arbitrary string or bytes. Strings are UTF-8 encoded.
+
+```python
+self.set_OCTETSTRING("1.0", "Hello, World!")
+self.set_OCTETSTRING("2.0", b"\x00\x01\x02")
+```
+
+### Counters
+
+```python
+def set_COUNTER32(self, oid: str, value: int) -> None
+def set_COUNTER64(self, oid: str, value: int) -> None
+```
+
+Monotonically increasing values that wrap at max. Use for packet counts, bytes transferred, etc.
+
+```python
+self.set_COUNTER32("1.0", packets_received)
+self.set_COUNTER64("2.0", bytes_transferred)
+```
+
+### Gauges
+
+```python
+def set_GAUGE32(self, oid: str, value: int) -> None
+```
+
+Values that can increase or decrease. Use for temperatures, queue lengths, etc.
+
+```python
+self.set_GAUGE32("1.0", current_connections)
+self.set_GAUGE32("2.0", cpu_percent)
+```
+
+### Time
+
+```python
+def set_TIMETICKS(self, oid: str, value: int) -> None
+```
+
+Time in hundredths of a second since some epoch.
+
+```python
+import time
+uptime_centiseconds = int((time.time() - start_time) * 100)
+self.set_TIMETICKS("1.0", uptime_centiseconds)
+```
+
+### Network Types
+
+```python
+def set_IPADDRESS(self, oid: str, value: str) -> None
+def set_OBJECTIDENTIFIER(self, oid: str, value: str) -> None
+```
+
+```python
+self.set_IPADDRESS("1.0", "192.168.1.1")
+self.set_OBJECTIDENTIFIER("2.0", "1.3.6.1.4.1.12345.1")
+```
+
+### Binary Data
+
+```python
+def set_OPAQUE(self, oid: str, value: bytes) -> None
+```
+
+Arbitrary binary data wrapped in ASN.1 encoding.
+
+```python
+self.set_OPAQUE("1.0", some_binary_blob)
+```
+
+## Passing Data to Updaters
+
+Since `register()` takes an instance, pass configuration via the constructor:
+
+```python
+class DatabaseUpdater(Updater):
+    def __init__(self, connection_string: str):
+        super().__init__()
+        self.conn_string = connection_string
+        self.pool = None
+
+    async def update(self):
+        if self.pool is None:
+            self.pool = await asyncpg.create_pool(self.conn_string)
+
+        async with self.pool.acquire() as conn:
+            count = await conn.fetchval("SELECT COUNT(*) FROM users")
+            self.set_INTEGER("1.0", count)
+
+# Usage
+agent.register(
+    "1.3.6.1.4.1.12345.1",
+    DatabaseUpdater("postgresql://localhost/mydb"),
+)
+```
+
+## Async Data Fetching
+
+The `update()` method is async, so you can use `await`:
+
+```python
+import httpx
+
+class APIUpdater(Updater):
+    def __init__(self):
+        super().__init__()
+        self.client = httpx.AsyncClient()
+
+    async def update(self):
+        resp = await self.client.get("https://api.example.com/stats")
+        data = resp.json()
+
+        self.set_INTEGER("1.0", data["active_users"])
+        self.set_INTEGER("2.0", data["requests_today"])
+```
+
+## Clearing Values
+
+Call `clear()` to remove all stored values:
+
+```python
+async def update(self):
+    self.clear()  # Start fresh
+
+    for i, item in enumerate(items):
+        self.set_OCTETSTRING(f"{i}.0", item.name)
+```
+
+## Update Frequency
+
+Control how often `update()` is called:
+
+```python
+# Update every 5 seconds
+agent.register("1.3.6.1.4.1.12345", MyUpdater(), freq=5)
+
+# Update every 60 seconds
+agent.register("1.3.6.1.4.1.12345", MyUpdater(), freq=60)
+```
+
+<Callout type="info">
+The agent stores the last values from `update()`. SNMP requests are served from this cache, not by calling `update()` on-demand.
+</Callout>
+
+## Multiple Registrations
+
+Register multiple updaters for different OID subtrees:
+
+```python
+agent.register("1.3.6.1.4.1.12345.1", SystemUpdater())
+agent.register("1.3.6.1.4.1.12345.2", NetworkUpdater())
+agent.register("1.3.6.1.4.1.12345.3", DatabaseUpdater(conn_string))
+```
+
+## Contexts
+
+SNMP contexts allow multiple views of the same OIDs:
+
+```python
+agent.register("1.3.6.1.4.1.12345", TenantUpdater("tenant-a"), context="tenant-a")
+agent.register("1.3.6.1.4.1.12345", TenantUpdater("tenant-b"), context="tenant-b")
+```
+
+Query with context:
+
+```bash
+snmpwalk -v2c -c public -n tenant-a localhost 1.3.6.1.4.1.12345
+```
+
+## Error Handling
+
+Exceptions in `update()` are logged but don't crash the agent:
+
+```python
+async def update(self):
+    try:
+        data = await self.fetch_data()
+        self.set_INTEGER("1.0", data["value"])
+    except Exception as e:
+        # Log error, keep previous values
+        logger.error(f"Update failed: {e}")
+```
+
+## Next Steps
+
+- [SET Handler](/docs/agent/set-handler) - Handle write operations
+- [Traps](/docs/agent/traps) - Send notifications
+- [Advanced](/docs/agent/advanced) - Performance tuning

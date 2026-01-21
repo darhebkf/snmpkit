@@ -1,0 +1,31 @@
+{
+  "agent": {
+    "iterations": 10000,
+    "metrics": {
+      "oid_parse": {
+        "label": "OID Parse",
+        "unit": "ops/sec",
+        "pyagentx3": 216030,
+        "snmpkit": 318276
+      },
+      "value_create": {
+        "label": "Value Create",
+        "unit": "ops/sec",
+        "pyagentx3": 52148,
+        "snmpkit": 332316
+      },
+      "pdu_encode": {
+        "label": "PDU Encode",
+        "unit": "ops/sec",
+        "pyagentx3": 17007,
+        "snmpkit": 196046
+      },
+      "header_decode": {
+        "label": "Header Decode",
+        "unit": "ops/sec",
+        "pyagentx3": 1034158,
+        "snmpkit": 967520
+      }
+    }
+  }
+}

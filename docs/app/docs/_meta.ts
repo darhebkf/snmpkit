@@ -4,12 +4,11 @@ export default {
   },
   introduction: "Introduction",
   "getting-started": "Getting Started",
-  features: "Features",
-  examples: "Examples",
+  agent: "Agent",
   changelog: "Changelog",
   __: {
     type: "separator",
-    title: "More",
+    title: "Resources",
   },
   llms: {
     title: "llms.txt",

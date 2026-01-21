@@ -1,0 +1,157 @@
+import { Tabs, Callout } from 'nextra/components'
+
+# Quickstart
+
+Build and run your first SNMP agent in 5 minutes.
+
+## Prerequisites
+
+- Python 3.10+
+- Net-SNMP installed and configured
+
+<Tabs items={['Ubuntu/Debian', 'RHEL/CentOS', 'macOS']}>
+  <Tabs.Tab>
+```bash
+sudo apt install snmpd snmp libsnmp-dev
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```bash
+sudo dnf install net-snmp net-snmp-utils net-snmp-devel
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```bash
+brew install net-snmp
+```
+  </Tabs.Tab>
+</Tabs>
+
+## Configure snmpd
+
+Enable AgentX in `/etc/snmp/snmpd.conf`:
+
+```conf
+# Enable AgentX
+master agentx
+agentXSocket /var/agentx/master
+```
+
+Restart snmpd:
+
+```bash
+sudo systemctl restart snmpd
+```
+
+## Create Your Agent
+
+```python filename="my_agent.py"
+import snmpkit
+from snmpkit.agent import Agent, Updater
+
+
+class SystemInfoUpdater(Updater):
+    """Provides system information via SNMP."""
+
+    async def update(self):
+        # OID suffix -> value
+        self.set_OCTETSTRING("1.0", "My Application")
+        self.set_OCTETSTRING("2.0", "1.0.0")
+        self.set_INTEGER("3.0", 42)
+
+
+async def main():
+    agent = Agent(agent_id="my-app")
+
+    # Register under enterprise OID 1.3.6.1.4.1.12345
+    agent.register("1.3.6.1.4.1.12345", SystemInfoUpdater())
+
+    print("Agent starting...")
+    await agent.start()
+
+
+snmpkit.run(main())
+```
+
+## Run the Agent
+
+<Tabs items={['pip', 'uv', 'pdm']}>
+  <Tabs.Tab>
+```bash
+python my_agent.py
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```bash
+uv run my_agent.py
+```
+  </Tabs.Tab>
+  <Tabs.Tab>
+```bash
+pdm run python my_agent.py
+```
+  </Tabs.Tab>
+</Tabs>
+
+## Query with snmpwalk
+
+In another terminal:
+
+```bash
+snmpwalk -v2c -c public localhost 1.3.6.1.4.1.12345
+```
+
+Expected output:
+
+```
+iso.3.6.1.4.1.12345.1.0 = STRING: "My Application"
+iso.3.6.1.4.1.12345.2.0 = STRING: "1.0.0"
+iso.3.6.1.4.1.12345.3.0 = INTEGER: 42
+```
+
+## Understanding the Code
+
+### Agent
+
+```python
+agent = Agent(agent_id="my-app")
+```
+
+Creates an agent that will connect to `/var/agentx/master` by default. The `agent_id` identifies your agent to the master.
+
+### Updater
+
+```python
+class SystemInfoUpdater(Updater):
+    async def update(self):
+        self.set_OCTETSTRING("1.0", "My Application")
+```
+
+The `update()` method is called periodically (default: every 10 seconds). Use `set_*` methods to provide values:
+
+- `set_INTEGER(oid, value)` - 32-bit signed integer
+- `set_OCTETSTRING(oid, value)` - String or bytes
+- `set_COUNTER32(oid, value)` - 32-bit counter
+- `set_GAUGE32(oid, value)` - 32-bit gauge
+- `set_TIMETICKS(oid, value)` - Time in centiseconds
+- `set_COUNTER64(oid, value)` - 64-bit counter
+- `set_IPADDRESS(oid, value)` - IPv4 address string
+- `set_OBJECTIDENTIFIER(oid, value)` - OID string
+
+### Registration
+
+```python
+agent.register("1.3.6.1.4.1.12345", SystemInfoUpdater())
+```
+
+Registers the updater for the OID subtree. The OID suffixes in `set_*` calls are appended to this base OID.
+
+<Callout type="info">
+The `register()` method takes an **instance**, not a class. This lets you pass configuration to your updater's constructor.
+</Callout>
+
+## Next Steps
+
+- [Updater](/docs/agent/updater) - Learn all Updater methods
+- [SET Handler](/docs/agent/set-handler) - Handle SNMP SET requests
+- [Examples](/docs/agent/examples) - More patterns and use cases

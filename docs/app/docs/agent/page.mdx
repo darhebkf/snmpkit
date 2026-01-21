@@ -1,0 +1,123 @@
+# Agent
+
+snmpkit's AgentX implementation lets you build SNMP subagents that connect to a master agent like Net-SNMP's `snmpd`.
+
+## Architecture
+
+```
+┌─────────────────┐     AgentX      ┌─────────────────┐
+│   SNMP Manager  │ ◄──────────────►│  Master Agent   │
+│   (snmpwalk)    │     SNMPv2c     │    (snmpd)      │
+└─────────────────┘                 └────────┬────────┘
+                                             │
+                                        Unix Socket
+                                    /var/agentx/master
+                                             │
+                                    ┌────────▼────────┐
+                                    │   snmpkit       │
+                                    │   Subagent      │
+                                    └─────────────────┘
+```
+
+Your snmpkit agent registers OID subtrees with the master agent. When SNMP requests arrive for those OIDs, the master forwards them to your agent via the AgentX protocol.
+
+## Configuration Reference
+
+All `Agent` options with their defaults:
+
+```python
+from snmpkit.agent import Agent
+
+agent = Agent(
+    # Identity
+    agent_id="snmpkit",              # Agent identifier sent to master
+
+    # Connection
+    socket_path="/var/agentx/master",  # AgentX socket (Unix or TCP)
+    timeout=5,                         # Connection timeout (seconds)
+
+    # Performance (see Advanced docs)
+    parallel_encoding=False,         # Rust rayon batch encoding
+    worker_threads=0,                # Python thread pool (0 = disabled)
+    queue_size=0,                    # Request queue size (0 = unbounded)
+)
+```
+
+Registration options:
+
+```python
+agent.register(
+    oid="1.3.6.1.4.1.12345",  # OID subtree to register
+    updater=MyUpdater(),      # Updater instance (not class)
+    freq=10,                  # Update frequency in seconds
+    context=None,             # SNMP context (None = default)
+    priority=127,             # Registration priority (1-255, lower = higher)
+)
+```
+
+## Core Concepts
+
+### Agent
+
+The `Agent` class manages the connection to the master agent and coordinates all registered updaters.
+
+```python
+from snmpkit.agent import Agent
+
+agent = Agent(agent_id="my-agent")
+```
+
+### Updater
+
+An `Updater` provides values for an OID subtree. Override `update()` to fetch data and use `set_*` methods to expose values.
+
+```python
+from snmpkit.agent import Updater
+
+class SystemUpdater(Updater):
+    async def update(self):
+        self.set_OCTETSTRING("1.0", "My Device")
+        self.set_INTEGER("2.0", 42)
+```
+
+### SetHandler
+
+A `SetHandler` processes SNMP SET requests with test/commit/undo semantics.
+
+```python
+from snmpkit.agent import SetHandler
+
+class ConfigHandler(SetHandler):
+    async def test(self, oid, value):
+        # Validate the value
+        pass
+
+    async def commit(self, oid, value):
+        # Apply the change
+        pass
+```
+
+## Quick Example
+
+```python
+import snmpkit
+from snmpkit.agent import Agent, Updater
+
+class MyUpdater(Updater):
+    async def update(self):
+        self.set_OCTETSTRING("1.0", "Hello, SNMP!")
+        self.set_INTEGER("2.0", 100)
+
+async def main():
+    agent = Agent(agent_id="example")
+    agent.register("1.3.6.1.4.1.12345", MyUpdater())
+    await agent.start()
+
+snmpkit.run(main())
+```
+
+## Next Steps
+
+- [Quickstart](/docs/agent/quickstart) - Build your first agent
+- [Updater](/docs/agent/updater) - Learn about the Updater class
+- [Examples](/docs/agent/examples) - See real-world patterns

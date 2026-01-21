@@ -1,3 +1,38 @@
 # Changelog
 
 All notable changes to this project will be documented here.
+
+## [0.1.0] - Unreleased
+
+### Added
+
+**Rust Core**
+- `Oid` type with parsing, comparison, parent/child operations
+- Radix trie for O(1) OID lookups
+- All SNMP value types (Integer, OctetString, Counter32, Counter64, Gauge32, TimeTicks, IpAddress, ObjectIdentifier, Opaque)
+- Complete AgentX PDU encoding/decoding (Open, Close, Register, Unregister, Get, GetNext, GetBulk, TestSet, CommitSet, UndoSet, CleanupSet, Notify, Ping, Response)
+- Optional parallel encoding with rayon
+
+**Python Agent API**
+- `Agent` class with async/sync entry points
+- `Updater` base class with all `set_*` methods
+- `SetHandler` for SNMP SET operations (test/commit/undo/cleanup)
+- Typed exception hierarchy (`SnmpkitError`, `ConnectionError`, `RegistrationError`, etc.)
+- SNMP context support
+- Automatic reconnection on connection loss
+- uvloop integration for high performance
+
+**Performance**
+- PDU encoding 11.5x faster than pyagentx3
+- Value creation 6.4x faster than pyagentx3
+- OID parsing 1.5x faster than pyagentx3
+
+### Changed
+
+- API uses instance-based registration (`agent.register(oid, MyUpdater())`) instead of class-based
+
+### Technical
+
+- Rust 1.83.0+ required
+- Python 3.10+ required (3.14+ recommended for free-threading)
+- PyO3 bindings for Python/Rust interop

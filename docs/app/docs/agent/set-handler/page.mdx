@@ -1,0 +1,229 @@
+import { Callout } from 'nextra/components'
+
+# SET Handler
+
+The `SetHandler` class processes SNMP SET requests with proper test/commit/undo semantics as defined by the AgentX protocol.
+
+## How SNMP SET Works
+
+SNMP SET is a two-phase commit:
+
+1. **TestSet** - Validate all values (can reject)
+2. **CommitSet** - Apply the changes
+3. **UndoSet** - Rollback if any commit fails
+4. **CleanupSet** - Release resources
+
+This ensures atomicity when setting multiple values in one request.
+
+## Basic Usage
+
+```python
+from snmpkit.agent import SetHandler
+
+class ConfigHandler(SetHandler):
+    async def test(self, oid: str, value) -> None:
+        """Validate the SET request. Raise exception to reject."""
+        if oid == "1.0" and len(str(value)) > 255:
+            raise ValueError("Value too long")
+
+    async def commit(self, oid: str, value) -> None:
+        """Apply the value. Called after successful test."""
+        if oid == "1.0":
+            await save_config("hostname", str(value))
+
+    async def undo(self, oid: str) -> None:
+        """Rollback if commit failed elsewhere in transaction."""
+        if oid == "1.0":
+            await restore_config("hostname")
+
+    async def cleanup(self, oid: str) -> None:
+        """Cleanup after transaction (success or failure)."""
+        pass
+```
+
+## Registration
+
+Register a `SetHandler` separately from your `Updater`:
+
+```python
+from snmpkit.agent import Agent, Updater, SetHandler
+
+class ConfigUpdater(Updater):
+    async def update(self):
+        hostname = await get_config("hostname")
+        self.set_OCTETSTRING("1.0", hostname)
+
+class ConfigSetHandler(SetHandler):
+    async def test(self, oid, value):
+        pass  # Validate
+
+    async def commit(self, oid, value):
+        if oid == "1.0":
+            await set_config("hostname", str(value))
+
+agent = Agent()
+agent.register("1.3.6.1.4.1.12345.1", ConfigUpdater())
+agent.register_set("1.3.6.1.4.1.12345.1", ConfigSetHandler())
+```
+
+## Method Reference
+
+### test(oid, value)
+
+```python
+async def test(self, oid: str, value: Any) -> None
+```
+
+Called during the TestSet phase. Validate the value and raise an exception to reject:
+
+```python
+async def test(self, oid, value):
+    if oid == "1.0":
+        if not isinstance(value, str):
+            raise TypeError("Expected string")
+        if len(value) > 64:
+            raise ValueError("Hostname too long (max 64 chars)")
+        if not value.isalnum():
+            raise ValueError("Hostname must be alphanumeric")
+```
+
+<Callout type="warning">
+If `test()` raises an exception, the entire SET transaction is rejected. No `commit()` or `undo()` will be called.
+</Callout>
+
+### commit(oid, value)
+
+```python
+async def commit(self, oid: str, value: Any) -> None
+```
+
+Called after all tests pass. Apply the change:
+
+```python
+async def commit(self, oid, value):
+    if oid == "1.0":
+        self._old_hostname = await get_config("hostname")
+        await set_config("hostname", str(value))
+```
+
+### undo(oid)
+
+```python
+async def undo(self, oid: str) -> None
+```
+
+Called if any `commit()` fails in a multi-value SET. Rollback your change:
+
+```python
+async def undo(self, oid):
+    if oid == "1.0" and hasattr(self, '_old_hostname'):
+        await set_config("hostname", self._old_hostname)
+```
+
+### cleanup(oid)
+
+```python
+async def cleanup(self, oid: str) -> None
+```
+
+Called after the transaction completes (success or failure). Release any resources:
+
+```python
+async def cleanup(self, oid):
+    if hasattr(self, '_old_hostname'):
+        del self._old_hostname
+```
+
+## Complete Example
+
+```python
+import snmpkit
+from snmpkit.agent import Agent, Updater, SetHandler
+
+
+# In-memory config store
+config = {
+    "hostname": "localhost",
+    "port": 8080,
+}
+
+
+class ConfigUpdater(Updater):
+    async def update(self):
+        self.set_OCTETSTRING("1.0", config["hostname"])
+        self.set_INTEGER("2.0", config["port"])
+
+
+class ConfigSetHandler(SetHandler):
+    def __init__(self):
+        super().__init__()
+        self._rollback = {}
+
+    async def test(self, oid, value):
+        if oid == "1.0":
+            if len(str(value)) > 64:
+                raise ValueError("Hostname too long")
+        elif oid == "2.0":
+            port = int(value)
+            if not (1 <= port <= 65535):
+                raise ValueError("Port must be 1-65535")
+
+    async def commit(self, oid, value):
+        if oid == "1.0":
+            self._rollback["hostname"] = config["hostname"]
+            config["hostname"] = str(value)
+        elif oid == "2.0":
+            self._rollback["port"] = config["port"]
+            config["port"] = int(value)
+
+    async def undo(self, oid):
+        if oid == "1.0" and "hostname" in self._rollback:
+            config["hostname"] = self._rollback["hostname"]
+        elif oid == "2.0" and "port" in self._rollback:
+            config["port"] = self._rollback["port"]
+
+    async def cleanup(self, oid):
+        self._rollback.clear()
+
+
+async def main():
+    agent = Agent()
+    agent.register("1.3.6.1.4.1.12345.1", ConfigUpdater())
+    agent.register_set("1.3.6.1.4.1.12345.1", ConfigSetHandler())
+    await agent.start()
+
+
+snmpkit.run(main())
+```
+
+Test with snmpset:
+
+```bash
+# Set hostname
+snmpset -v2c -c private localhost 1.3.6.1.4.1.12345.1.1.0 s "newhost"
+
+# Set port
+snmpset -v2c -c private localhost 1.3.6.1.4.1.12345.1.2.0 i 9090
+```
+
+<Callout type="info">
+Make sure your `snmpd.conf` allows write access with a community like `private`.
+</Callout>
+
+## Contexts
+
+SET handlers support contexts just like updaters:
+
+```python
+agent.register_set(
+    "1.3.6.1.4.1.12345.1",
+    TenantConfigHandler("tenant-a"),
+    context="tenant-a",
+)
+```
+
+## Next Steps
+
+- [Traps](/docs/agent/traps) - Send notifications
+- [Advanced](/docs/agent/advanced) - Performance tuning
+- [Examples](/docs/agent/examples) - More patterns
